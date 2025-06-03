@@ -46,6 +46,7 @@ HANDLERS_DICT = {
     "BrowserUse": HandlerTuple("browseruse", "BrowserUseInput", "BrowserUseBench"),
     "BrowserUseAPI": HandlerTuple("browseruse_api", "BrowserUseAPIInput", "BrowserUseAPIBench"),
     "Convergence": HandlerTuple("convergence", "ConvergenceInput", "ConvergenceBench"),
+    "Spark": HandlerTuple("spark", "SparkInput", "SparkBench"),
 }
 
 
