@@ -70,7 +70,8 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                     stderr_task = asyncio.create_task(read_stream(proc.stderr, False))
                     try:
                         stdout, stderr = await asyncio.wait_for(asyncio.gather(stdout_task, stderr_task), timeout=self.params.timeout)
-                        returncode = proc.returncode
+                        await proc.wait()  # Ensure process has terminated
+                        returncode = proc.returncode if proc.returncode is not None else -3
                     except asyncio.TimeoutError:
                         proc.kill()
                         await proc.wait()
@@ -78,7 +79,7 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                         returncode = -1
                 else:
                     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.params.timeout)
-                    returncode = proc.returncode
+                    returncode = proc.returncode if proc.returncode is not None else -3
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
