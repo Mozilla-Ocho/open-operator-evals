@@ -6,12 +6,12 @@ capture_logging = false
 max_task_duration_in_s = 360
 
 [RunParameters.task_set]
-name = "WebVoyager30"
+name = "WebVoyagerSingle"
 
 [Spark]
 spark_dir = "../spark"
 debug = true
-provider = "openai"
-model = "gpt-4.1"
-# provider = "openrouter"
-# model = "anthropic/claude-3.7-sonnet"
+# provider = "openai"
+# model = "gpt-4.1"
+provider = "openrouter"
+model = "anthropic/claude-3.7-sonnet"
