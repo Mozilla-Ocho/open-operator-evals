@@ -1,5 +1,5 @@
 import time
-from typing import ClassVar
+from typing import ClassVar, Optional
 
 from typing_extensions import override
 
@@ -8,6 +8,11 @@ try:
     from langchain_openai.chat_models import ChatOpenAI
 except ImportError:
     raise ImportError("WebVoyager evaluator requires installing langchain_openai")
+
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+except ImportError:
+    ChatGoogleGenerativeAI = None
 
 
 from eval.evaluators.evaluator import EvalEnum, EvaluationResponse, Evaluator
@@ -41,6 +46,39 @@ class WebvoyagerEvaluator(Evaluator):
     past_screenshots: int = 4
     tries: int = 3
     model: str = "gpt-4o"
+    provider: str = "openai"  # "openai" or "google"
+    google_credentials_path: Optional[str] = None
+    google_project_id: Optional[str] = None
+
+    def _create_llm_client(self):
+        """Create LLM client based on configured provider."""
+        if self.provider == "google":
+            if ChatGoogleGenerativeAI is None:
+                raise ImportError("Google AI support requires installing langchain-google-genai")
+            
+            # Configure Google AI client
+            kwargs = {"model": self.model}
+            
+            # Set credentials if explicitly provided and file exists (for local development)
+            if self.google_credentials_path:
+                import os
+                if os.path.exists(self.google_credentials_path):
+                    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.google_credentials_path
+                else:
+                    # File doesn't exist, let it fall back to ADC
+                    print(f"Warning: Credentials file {self.google_credentials_path} not found, using Application Default Credentials")
+            # Otherwise uses Application Default Credentials (ADC) - perfect for Cloud Tasks!
+            
+            if self.google_project_id:
+                kwargs["project_id"] = self.google_project_id
+                
+            return ChatGoogleGenerativeAI(**kwargs)
+        
+        elif self.provider == "openai":
+            return ChatOpenAI(model=self.model)
+        
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}. Supported: 'openai', 'google'")
 
     @override
     async def eval(
@@ -49,8 +87,8 @@ class WebvoyagerEvaluator(Evaluator):
         task: str,
         screenshots: list[str],
     ) -> EvaluationResponse:
-        # recreate it
-        llm = ChatOpenAI(model=self.model)
+        # Create LLM client based on provider
+        llm = self._create_llm_client()
 
         screenshots = screenshots[-self.past_screenshots :]
         screenshot_content = [
@@ -88,11 +126,24 @@ class WebvoyagerEvaluator(Evaluator):
                 break
             except Exception as e:
                 print(e)
-                if type(e).__name__ == "RateLimitError":
+                error_name = type(e).__name__
+                # Handle OpenAI errors
+                if error_name == "RateLimitError":
                     time.sleep(10)
-                elif type(e).__name__ == "APIError":
+                elif error_name == "APIError":
                     time.sleep(15)
-                elif type(e).__name__ == "InvalidRequestError":
+                elif error_name == "InvalidRequestError":
+                    exit(0)
+                # Handle Google AI errors
+                elif error_name == "ResourceExhausted":  # Google AI rate limit
+                    time.sleep(10)
+                elif error_name == "InvalidArgument":  # Google AI invalid request
+                    exit(0)
+                elif error_name == "PermissionDenied":  # Google AI auth error
+                    print(f"Google AI authentication error: {e}")
+                    exit(0)
+                elif error_name == "NotFound":  # Google AI model not found
+                    print(f"Google AI model not found: {e}")
                     exit(0)
                 else:
                     time.sleep(10)

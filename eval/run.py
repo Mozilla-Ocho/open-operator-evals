@@ -336,6 +336,8 @@ def load_data(input_stream: TextIO | None = None) -> dict[str, Any]:
 
 def run_tasks(config: dict[str, Any], dir: Path | str = ".") -> Path:
     RUN_PARAMS_KEY = "RunParameters"
+    EVALUATOR_PARAMS_KEY = "EvaluatorParameters"
+    
     if RUN_PARAMS_KEY not in config:
         raise ValueError("Need to configure run with RunParameters table")
 
@@ -347,11 +349,16 @@ def run_tasks(config: dict[str, Any], dir: Path | str = ".") -> Path:
     elif evaluator not in EVALUATORS_DICT:
         raise ValueError(f"No evaluator found for {evaluator}")
     else:
-        run_params_dict["evaluator"] = fetch_evaluator(evaluator)()
+        # Check for optional evaluator parameters
+        evaluator_params = config.get(EVALUATOR_PARAMS_KEY, {})
+        run_params_dict["evaluator"] = fetch_evaluator(evaluator)(**evaluator_params)
 
     run_params = RunParameters.model_validate(run_params_dict)
 
     del config[RUN_PARAMS_KEY]
+    # Remove EvaluatorParameters section if it exists
+    if EVALUATOR_PARAMS_KEY in config:
+        del config[EVALUATOR_PARAMS_KEY]
 
     if len(config) > 1:
         raise ValueError("Table should only have params for a single Agent")
