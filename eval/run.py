@@ -334,7 +334,7 @@ def load_data(input_stream: TextIO | None = None) -> dict[str, Any]:
     return tomllib.loads(data)
 
 
-def run_tasks(config: dict[str, Any], dir: Path | str = ".") -> Path:
+def run_tasks(config: dict[str, Any], dir: Path | str = ".", output_dir: Path | str | None = None) -> Path:
     RUN_PARAMS_KEY = "RunParameters"
     EVALUATOR_PARAMS_KEY = "EvaluatorParameters"
     
@@ -373,10 +373,14 @@ def run_tasks(config: dict[str, Any], dir: Path | str = ".") -> Path:
 
     agent_bench = benchmark(input_params)
 
-    if isinstance(dir, str):
-        dir = Path(dir)
-
-    experiment_path = dir / run_params.task_set.name / benchmark_handler_key / str(int(time.time()))
+    # If output_dir is provided, use it directly
+    # Otherwise, use the traditional nested structure
+    if output_dir is not None:
+        experiment_path = Path(output_dir) if isinstance(output_dir, str) else output_dir
+    else:
+        if isinstance(dir, str):
+            dir = Path(dir)
+        experiment_path = dir / run_params.task_set.name / benchmark_handler_key / str(int(time.time()))
 
     experiment_path.mkdir(parents=True, exist_ok=True)
     _ = (experiment_path / "params.json").write_text(input_params.model_dump_json(indent=2))
@@ -390,6 +394,7 @@ def run_tasks(config: dict[str, Any], dir: Path | str = ".") -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="NotteBench", description="Notte Benchmark tool for agents")
     _ = parser.add_argument("input_file", nargs="?", type=argparse.FileType("r"), default=sys.stdin)
+    _ = parser.add_argument("--output-dir", "-o", type=str, help="Custom output directory for results")
 
     args = parser.parse_args()
 
@@ -401,7 +406,7 @@ def main() -> None:
         # Data is from stdin
         data = load_data()
 
-    _ = run_tasks(data)
+    _ = run_tasks(data, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":
