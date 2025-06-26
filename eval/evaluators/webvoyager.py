@@ -14,6 +14,18 @@ try:
 except ImportError:
     ChatGoogleGenerativeAI = None
 
+try:
+    from langchain_google_vertexai import ChatVertexAI
+except ImportError:
+    ChatVertexAI = None
+
+try:
+    from google import genai
+    from google.oauth2 import service_account
+except ImportError:
+    genai = None
+    service_account = None
+
 
 from eval.evaluators.evaluator import EvalEnum, EvaluationResponse, Evaluator
 
@@ -46,7 +58,7 @@ class WebvoyagerEvaluator(Evaluator):
     past_screenshots: int = 4
     tries: int = 3
     model: str = "gpt-4o"
-    provider: str = "openai"  # "openai" or "google"
+    provider: str = "openai"  # "openai", "google", "vertex", or "google-direct"
     google_credentials_path: Optional[str] = None
     google_project_id: Optional[str] = None
 
@@ -64,21 +76,54 @@ class WebvoyagerEvaluator(Evaluator):
                 import os
                 if os.path.exists(self.google_credentials_path):
                     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.google_credentials_path
+                    print(f"Using service account credentials from {self.google_credentials_path}")
                 else:
-                    # File doesn't exist, let it fall back to ADC
                     print(f"Warning: Credentials file {self.google_credentials_path} not found, using Application Default Credentials")
-            # Otherwise uses Application Default Credentials (ADC) - perfect for Cloud Tasks!
+            else:
+                print("Using Application Default Credentials for Google AI evaluator")
             
             if self.google_project_id:
                 kwargs["project_id"] = self.google_project_id
                 
             return ChatGoogleGenerativeAI(**kwargs)
         
+        elif self.provider == "vertex":
+            if ChatVertexAI is None:
+                raise ImportError("Vertex AI support requires installing langchain-google-vertexai")
+            
+            # Configure Vertex AI client
+            kwargs = {"model_name": self.model}
+            
+            if self.google_project_id:
+                kwargs["project"] = self.google_project_id
+            else:
+                # Try to get project ID from environment (Cloud Run sets PROJECT_ID)
+                import os
+                project_id = os.environ.get('PROJECT_ID')
+                if project_id:
+                    kwargs["project"] = project_id
+                    print(f"Using project ID from environment: {project_id}")
+                else:
+                    print("Warning: No project_id specified for Vertex AI, using default project")
+                
+            # Set credentials if explicitly provided (for local development)
+            if self.google_credentials_path:
+                import os
+                if os.path.exists(self.google_credentials_path):
+                    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.google_credentials_path
+                    print(f"Using service account credentials from {self.google_credentials_path}")
+                else:
+                    print(f"Warning: Credentials file {self.google_credentials_path} not found, using Application Default Credentials")
+            else:
+                print("Using Application Default Credentials for Vertex AI evaluator")
+                
+            return ChatVertexAI(**kwargs)
+        
         elif self.provider == "openai":
             return ChatOpenAI(model=self.model)
         
         else:
-            raise ValueError(f"Unsupported provider: {self.provider}. Supported: 'openai', 'google'")
+            raise ValueError(f"Unsupported provider: {self.provider}. Supported: 'openai', 'google', 'vertex'")
 
     @override
     async def eval(
