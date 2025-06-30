@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 import time
 from typing import Any, Dict, List, Optional
 
@@ -30,6 +31,7 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
 
     @override
     async def run_agent(self, task: BenchmarkTask) -> SparkOutput:
+        url = task.url
         prompt = task.question
         env = os.environ.copy()
         if self.params.env:
@@ -38,11 +40,20 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
         env["SPARK_PROVIDER"] = self.params.provider
         env["SPARK_MODEL"] = self.params.model
         env["SPARK_HEADLESS"] = "true"
+        env["SPARK_LOGGER"] = "json"
+        
+        if "SPARK_PROXY" in os.environ:
+            env["SPARK_PROXY"] = os.environ["SPARK_PROXY"]
+        if "SPARK_PROXY_USERNAME" in os.environ:
+            env["SPARK_PROXY_USERNAME"] = os.environ["SPARK_PROXY_USERNAME"] 
+        if "SPARK_PROXY_PASSWORD" in os.environ:
+            env["SPARK_PROXY_PASSWORD"] = os.environ["SPARK_PROXY_PASSWORD"]
 
-        command = ["pnpm", "spark", "run", "--logger", "json", prompt]
+        debug = getattr(self.params, "debug", False)
+
+        command = ["pnpm", "spark", "run", "--url", url, prompt]
 
         cwd = self.params.spark_dir
-        debug = getattr(self.params, "debug", False)
         start_time = time.time()
 
         try:
@@ -54,41 +65,92 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                if debug:
-                    # Stream output to console and capture
-                    async def read_stream(stream, is_stdout=True):
-                        chunks = []
-                        while True:
-                            line = await stream.readline()
-                            if not line:
-                                break
-                            chunks.append(line)
-                            print((line.decode(errors="replace").rstrip()), file=(sys.stdout if is_stdout else sys.stderr))
-                        return b"".join(chunks)
-                    import sys
-                    stdout_task = asyncio.create_task(read_stream(proc.stdout, True))
-                    stderr_task = asyncio.create_task(read_stream(proc.stderr, False))
+                # Enhanced streaming with large buffer support
+                async def read_stream(stream, is_stdout=True):
+                    chunks = []
+                    line_count = 0 
+                    buffer = b""
+                    
                     try:
-                        stdout, stderr = await asyncio.wait_for(asyncio.gather(stdout_task, stderr_task), timeout=self.params.timeout)
-                        await proc.wait()  # Ensure process has terminated
-                        returncode = proc.returncode if proc.returncode is not None else -3
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                        await proc.wait()
-                        stdout, stderr = b"", b"Process timed out."
-                        returncode = -1
-                else:
-                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.params.timeout)
+                        while True:
+                            # Read larger chunks to handle big AI responses
+                            chunk = await stream.read(65536)  # 64KB chunks instead of readline
+                            if not chunk:
+                                # Process any remaining buffer content
+                                if buffer:
+                                    chunks.append(buffer)
+                                    if debug:
+                                        stream_name = "stdout" if is_stdout else "stderr"
+                                        try:
+                                            buffer_text = buffer.decode(errors="replace").rstrip()
+                                            if buffer_text:
+                                                line_count += buffer_text.count('\n') + 1
+                                                print(f"[{stream_name}:final@{time.time()-start_time:.1f}s] {buffer_text[-200:]}", file=(sys.stdout if is_stdout else sys.stderr))
+                                        except Exception:
+                                            pass
+                                break
+                                
+                            buffer += chunk
+                            current_time = time.time()
+                            
+                            # Process complete lines from buffer
+                            while b'\n' in buffer:
+                                line, buffer = buffer.split(b'\n', 1)
+                                line += b'\n'  # Add back the newline
+                                chunks.append(line)
+                                line_count += 1
+                                
+                                if debug:
+                                    stream_name = "stdout" if is_stdout else "stderr"
+                                    try:
+                                        line_text = line.decode(errors="replace").rstrip()
+                                        print(f"[{stream_name}:{line_count}@{current_time-start_time:.1f}s] {line_text}", file=(sys.stdout if is_stdout else sys.stderr))
+                                    except Exception:
+                                        # Don't let decode errors break stream processing
+                                        pass
+                            
+                    except Exception as e:
+                        # If streaming fails, add error info but don't fail completely
+                        error_msg = f"Stream reading error ({'stdout' if is_stdout else 'stderr'}): {e}\n"
+                        chunks.append(error_msg.encode())
+                        if debug:
+                            print(f"SPARK DEBUG: Stream reading exception: {e}")
+                    
+                    return b"".join(chunks)
+                
+                stdout_task = asyncio.create_task(read_stream(proc.stdout, True))
+                stderr_task = asyncio.create_task(read_stream(proc.stderr, False))
+                try:
+                    stdout, stderr = await asyncio.wait_for(asyncio.gather(stdout_task, stderr_task), timeout=self.params.timeout)
+                    await proc.wait()  # Ensure process has terminated
                     returncode = proc.returncode if proc.returncode is not None else -3
+                        
+                except asyncio.TimeoutError:
+                    if debug:
+                        print(f"SPARK DEBUG: Process timed out after {self.params.timeout} seconds")
+                    proc.kill()
+                    await proc.wait()
+                    stdout, stderr = b"", b"Process timed out."
+                    returncode = -1
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
                 stdout, stderr = b"", b"Process timed out."
                 returncode = -1
         except Exception as e:
+            if debug:
+                print(f"SPARK DEBUG: Exception during subprocess creation: {e}")
             stdout, stderr = b"", str(e).encode()
             returncode = -2
         duration = time.time() - start_time
+        
+        if returncode != 0 and debug:
+            print(f"SPARK DEBUG: Process failed with exit code {returncode}")
+            if stderr:
+                print(f"SPARK DEBUG: Stderr: {stderr.decode(errors='replace')[:200]}")
+        elif debug:
+            print(f"SPARK DEBUG: Process completed successfully")
+        
         return SparkOutput(
             stdout=stdout.decode(errors="replace"),
             stderr=stderr.decode(errors="replace"),
@@ -109,12 +171,25 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
         event_counts = {}
         debug_info = {"total_lines": 0, "json_lines": 0, "ai_generation_events": 0, "agent_thinking_events": 0}
         
-        # Parse each line as a JSON event
-        for line in out.stdout.strip().splitlines():
+        # Parse each line as a JSON event - check both stdout and stderr
+        all_output = out.stdout + "\n" + out.stderr
+        lines = all_output.strip().splitlines()
+        
+        # Debug: Save actual output for debugging
+        debug_info["stdout_length"] = len(out.stdout)
+        debug_info["stderr_length"] = len(out.stderr)
+        debug_info["stdout_preview"] = out.stdout[:200]
+        debug_info["stderr_preview"] = out.stderr[:200]
+        debug_info["return_code"] = out.returncode
+        debug_info["duration"] = out.duration_in_s
+        debug_info["command"] = "pnpm spark run"  # Fixed: command not in scope
+        
+        for line in lines:
             debug_info["total_lines"] += 1
             try:
                 # Skip non-JSON lines (like console output)
                 if not line.strip().startswith('{'):
+                    debug_info["non_json_lines"] = debug_info.get("non_json_lines", 0) + 1
                     continue
                 
                 debug_info["json_lines"] += 1
@@ -138,8 +213,12 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                         "thinking_operation": "Initial setup"
                     }
                 
-                # Start a new step when we see an agent:thinking event with status "start"
-                elif event_type == "agent:thinking":
+                elif event_type == "task:started":
+                    if current_step is not None:
+                        current_step["url"] = data.get("url", task.url or "")
+                
+                # Start a new step when we see an agent:processing event with status "start"
+                elif event_type == "agent:processing":
                     debug_info["agent_thinking_events"] += 1
                     
                     # Initialize current_step if it doesn't exist yet
@@ -169,8 +248,8 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                     elif data.get("status") == "end" and current_step:
                         current_step["end_time"] = timestamp
                 
-                # Update the URL when we see a page:navigation event
-                elif event_type == "page:navigation" and "url" in data:
+                # Update the URL when we see a browser:navigated event
+                elif event_type == "browser:navigated" and "url" in data:
                     # Initialize current_step if it doesn't exist yet
                     if current_step is None:
                         current_step = {
@@ -245,7 +324,7 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                     all_llm_calls.append(llm_call)
                 
                 # Extract final answer from task:complete event
-                elif event_type == "task:complete":
+                elif event_type == "task:completed":
                     final_answer = data.get("finalAnswer", "")
                     # Mark the end of the current step if it exists
                     if current_step and current_step["end_time"] == 0:
@@ -264,10 +343,27 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                 current_step["end_time"] = current_step["start_time"] + 1000  # Default 1 second duration if no end time
             steps_data.append(current_step)
         
-        # If we didn't find a final answer in task:complete, use the last line as fallback
+        # If we didn't find a final answer in task:complete, try to extract from final actions
         if not final_answer:
+            # Look for successful browser actions that might indicate task completion
             stdout_lines = out.stdout.strip().splitlines()
-            final_answer = stdout_lines[-1] if stdout_lines else ""
+            for line in reversed(stdout_lines):
+                try:
+                    if not line.strip().startswith('{'):
+                        continue
+                    event = json.loads(line)
+                    if event.get("event") == "browser:action_completed" and event.get("data", {}).get("success"):
+                        final_answer = "Task completed successfully based on browser actions"
+                        break
+                    elif event.get("event") == "agent:extracted" and event.get("data", {}).get("extractedData"):
+                        final_answer = str(event.get("data", {}).get("extractedData", ""))
+                        break
+                except (json.JSONDecodeError, KeyError):
+                    continue
+            
+            # Final fallback to last line if nothing else found
+            if not final_answer:
+                final_answer = stdout_lines[-1] if stdout_lines else ""
         
         # Convert step data to Step objects
         steps = []

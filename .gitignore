@@ -4,3 +4,4 @@ __pycache__/
 .venv
 WebVoyager30/Spark
 WebVoyagerSingle/Spark
+tmp/
