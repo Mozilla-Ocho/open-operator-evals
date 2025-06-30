@@ -1,0 +1,21 @@
+[RunParameters]
+n_jobs = 1
+tries_per_task = 1
+evaluator = "webvoyager"
+capture_logging = false
+max_task_duration_in_s = 360
+
+[RunParameters.task_set]
+name = "WebVoyager"
+
+[EvaluatorParameters]
+provider = "vertex"
+model = "gemini-2.5-flash"
+
+[Spark]
+spark_dir = "../spark"
+debug = true
+# provider = "openai"
+# model = "gpt-4.1"
+provider = "openrouter"
+model = "google/gemini-2.5-flash"

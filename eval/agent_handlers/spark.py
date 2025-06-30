@@ -386,6 +386,40 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
         # Determine success based on return code and presence of an answer
         success = out.returncode == 0 and bool(final_answer)
         
+        # When process fails, enhance the agent answer with error details
+        if out.returncode != 0:
+            error_details = []
+            
+            # Look for specific error messages in stderr first
+            if out.stderr:
+                stderr_lines = out.stderr.strip().splitlines()
+                for line in stderr_lines:
+                    if any(error_type in line for error_type in [
+                        "NS_ERROR_PROXY_FORBIDDEN", 
+                        "NS_ERROR_", 
+                        "Error:", 
+                        "TypeError:", 
+                        "ReferenceError:",
+                        "page.goto:",
+                        "Connection refused",
+                        "timeout"
+                    ]):
+                        error_details.append(line.strip())
+            
+            # Also check stdout for error events
+            if out.stdout:
+                stdout_lines = out.stdout.strip().splitlines()
+                for line in stdout_lines:
+                    if "Error:" in line or "❌" in line:
+                        error_details.append(line.strip())
+            
+            # If we found specific error details, use them as the agent answer
+            if error_details:
+                final_answer = f"Task failed with error: {'; '.join(error_details[:3])}"  # Limit to first 3 error lines
+            elif not final_answer:
+                # Fallback to generic error message with return code
+                final_answer = f"Task failed with exit code {out.returncode}. Check stderr for details."
+        
         # Add debug info to logs
         logs = {
             "debug_info": json.dumps(debug_info),
