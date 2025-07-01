@@ -42,6 +42,12 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
         env["SPARK_HEADLESS"] = "true"
         env["SPARK_LOGGER"] = "json"
         
+        # Set API keys for Spark
+        if "OPENROUTER_API_KEY" in os.environ:
+            env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
+        if "OPENAI_API_KEY" in os.environ:
+            env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
+        
         if "SPARK_PROXY" in os.environ:
             env["SPARK_PROXY"] = os.environ["SPARK_PROXY"]
         if "SPARK_PROXY_USERNAME" in os.environ:
@@ -51,7 +57,7 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
 
         debug = getattr(self.params, "debug", False)
 
-        command = ["pnpm", "spark", "run", "--url", url, prompt]
+        command = ["npm", "run", "spark", "--", "run", "--url", url, prompt]
 
         cwd = self.params.spark_dir
         start_time = time.time()
@@ -182,7 +188,7 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
         debug_info["stderr_preview"] = out.stderr[:200]
         debug_info["return_code"] = out.returncode
         debug_info["duration"] = out.duration_in_s
-        debug_info["command"] = "pnpm spark run"  # Fixed: command not in scope
+        debug_info["command"] = "npm run spark"  # Fixed: command not in scope
         
         for line in lines:
             debug_info["total_lines"] += 1
