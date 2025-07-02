@@ -11,6 +11,8 @@ from typing_extensions import override
 from eval.data.load_data import BenchmarkTask
 from eval.task_types import AgentBenchmark, Step, TaskResult, LLMCall
 
+MAX_DEBUG_LINE_LENGTH = 500  # Maximum length of debug lines to prevent excessive buffering
+
 class SparkInput(BaseModel):
     spark_dir: str = "../spark"
     env: Optional[Dict[str, str]] = None
@@ -110,9 +112,53 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                                     stream_name = "stdout" if is_stdout else "stderr"
                                     try:
                                         line_text = line.decode(errors="replace").rstrip()
+                                        # Truncate very long lines to prevent buffering issues
+                                        if len(line_text) > MAX_DEBUG_LINE_LENGTH:
+                                            line_text = line_text[:MAX_DEBUG_LINE_LENGTH] + "..."
                                         print(f"[{stream_name}:{line_count}@{current_time-start_time:.1f}s] {line_text}", file=(sys.stdout if is_stdout else sys.stderr))
                                     except Exception:
                                         # Don't let decode errors break stream processing
+                                        pass
+                                else:
+                                    # Show progress for key events even in non-debug mode
+                                    try:
+                                        line_text = line.decode(errors="replace").rstrip()
+                                        if line_text.startswith('{') and is_stdout:
+                                            try:
+                                                event = json.loads(line_text)
+                                                event_type = event.get("event", "")
+                                                data = event.get("data", {})
+                                                
+                                                # Show progress for key events
+                                                if event_type in ["task:setup", "task:started", "browser:navigated", "agent:step", "agent:observed", "browser:action_started", "browser:action_completed", "task:completed"]:
+                                                    if event_type == "task:setup":
+                                                        task_name = str(data.get('task', ''))[:50]
+                                                        print(f"🚀 Starting task: {task_name}...", flush=True)
+                                                    elif event_type == "task:started":
+                                                        url = str(data.get('url', ''))
+                                                        print(f"📋 Task started at: {url}", flush=True)
+                                                    elif event_type == "browser:navigated":
+                                                        url = str(data.get('url', ''))
+                                                        print(f"🌐 Navigated to: {url}", flush=True)
+                                                    elif event_type == "agent:step":
+                                                        step = str(data.get('currentStep', ''))
+                                                        print(f"🤖 Step: {step}", flush=True)
+                                                    elif event_type == "agent:observed":
+                                                        obs = str(data.get('observation', ''))[:100]
+                                                        print(f"👀 Observed: {obs}...", flush=True)
+                                                    elif event_type == "browser:action_started":
+                                                        action = str(data.get('action', ''))
+                                                        ref = str(data.get('ref', ''))
+                                                        print(f"⚡ Action: {action} {ref}", flush=True)
+                                                    elif event_type == "browser:action_completed":
+                                                        success = data.get('success', False)
+                                                        status = "✅" if success else "❌"
+                                                        print(f"{status} Action completed", flush=True)
+                                                    elif event_type == "task:completed":
+                                                        print(f"🏁 Task completed", flush=True)
+                                            except json.JSONDecodeError:
+                                                pass
+                                    except Exception:
                                         pass
                             
                     except Exception as e:
@@ -134,9 +180,20 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                 except asyncio.TimeoutError:
                     if debug:
                         print(f"SPARK DEBUG: Process timed out after {self.params.timeout} seconds")
+                    # Cancel the stream reading tasks to prevent hanging
+                    stdout_task.cancel()
+                    stderr_task.cancel()
                     proc.kill()
                     await proc.wait()
-                    stdout, stderr = b"", b"Process timed out."
+                    # Try to get partial output from completed tasks
+                    try:
+                        stdout = await stdout_task
+                    except (asyncio.CancelledError, Exception):
+                        stdout = b""
+                    try:
+                        stderr = await stderr_task
+                    except (asyncio.CancelledError, Exception):
+                        stderr = b"Process timed out."
                     returncode = -1
             except asyncio.TimeoutError:
                 proc.kill()
