@@ -97,28 +97,20 @@ class WebvoyagerEvaluator(Evaluator):
             if self.google_project_id:
                 kwargs["project"] = self.google_project_id
             else:
-                # Try to get project ID from environment (Cloud Run sets PROJECT_ID)
+                # Try to get project ID from environment
                 import os
-                project_id = os.environ.get('PROJECT_ID')
+                project_id = os.environ.get('GOOGLE_CLOUD_PROJECT') or os.environ.get('GOOGLE_VERTEX_PROJECT')
                 if project_id:
                     kwargs["project"] = project_id
-                    print(f"Using project ID from environment: {project_id}")
-                else:
-                    print("Warning: No project_id specified for Vertex AI, using default project")
-                
+
             # Set credentials if explicitly provided (for local development)
             if self.google_credentials_path:
                 import os
                 if os.path.exists(self.google_credentials_path):
                     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.google_credentials_path
-                    print(f"Using service account credentials from {self.google_credentials_path}")
-                else:
-                    print(f"Warning: Credentials file {self.google_credentials_path} not found, using Application Default Credentials")
-            else:
-                print("Using Application Default Credentials for Vertex AI evaluator")
-                
+
             return ChatVertexAI(**kwargs)
-        
+
         elif self.provider == "openai":
             return ChatOpenAI(model=self.model)
         

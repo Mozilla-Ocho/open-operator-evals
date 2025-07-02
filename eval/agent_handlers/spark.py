@@ -43,19 +43,22 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
         env["SPARK_MODEL"] = self.params.model
         env["SPARK_HEADLESS"] = "true"
         env["SPARK_LOGGER"] = "json"
-        
+
+        if "SPARK_PROXY" in os.environ:
+            env["SPARK_PROXY"] = os.environ["SPARK_PROXY"]
+        if "SPARK_PROXY_USERNAME" in os.environ:
+            env["SPARK_PROXY_USERNAME"] = os.environ["SPARK_PROXY_USERNAME"]
+        if "SPARK_PROXY_PASSWORD" in os.environ:
+            env["SPARK_PROXY_PASSWORD"] = os.environ["SPARK_PROXY_PASSWORD"]
+
         # Set API keys for Spark
         if "OPENROUTER_API_KEY" in os.environ:
             env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
         if "OPENAI_API_KEY" in os.environ:
             env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
-        
-        if "SPARK_PROXY" in os.environ:
-            env["SPARK_PROXY"] = os.environ["SPARK_PROXY"]
-        if "SPARK_PROXY_USERNAME" in os.environ:
-            env["SPARK_PROXY_USERNAME"] = os.environ["SPARK_PROXY_USERNAME"] 
-        if "SPARK_PROXY_PASSWORD" in os.environ:
-            env["SPARK_PROXY_PASSWORD"] = os.environ["SPARK_PROXY_PASSWORD"]
+
+        if "GOOGLE_CLOUD_PROJECT" in os.environ:
+            env["GOOGLE_CLOUD_PROJECT"] = os.environ["GOOGLE_CLOUD_PROJECT"]
 
         debug = getattr(self.params, "debug", False)
 
@@ -167,7 +170,7 @@ class SparkBench(AgentBenchmark[SparkInput, SparkOutput]):
                         chunks.append(error_msg.encode())
                         if debug:
                             print(f"SPARK DEBUG: Stream reading exception: {e}")
-                    
+
                     return b"".join(chunks)
                 
                 stdout_task = asyncio.create_task(read_stream(proc.stdout, True))
