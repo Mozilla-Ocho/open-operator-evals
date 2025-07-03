@@ -6,6 +6,7 @@ import contextlib
 import functools
 import io
 import logging
+import random
 import sys
 import time
 import tomllib
@@ -41,6 +42,7 @@ load_dotenv()
 
 class TaskSet(BaseModel):
     name: str
+    shuffle: bool = False
     start: int | None = None
     end: int | None = None
 
@@ -53,7 +55,6 @@ class RunParameters(BaseModel):
     evaluator: Evaluator | None = None
     experiment_path: Path | str = ""
     capture_logging: bool = True
-    shuffle_tasks: bool = False
 
 
 class InRunParameters(BaseModel):
@@ -233,8 +234,8 @@ def compute_tasks(
     tasks = task_class.read_tasks()
     task_slice = slice(run_parameters.task_set.start, run_parameters.task_set.end)
     tasks = tasks[task_slice]
-    if run_parameters.shuffle_tasks:
-        import random
+    
+    if run_parameters.task_set.shuffle:
         random.shuffle(tasks)
 
     futures: list[tuple[BenchmarkTask, InRunParameters, pebble.ProcessFuture]] = []
