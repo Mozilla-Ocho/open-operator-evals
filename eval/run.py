@@ -53,6 +53,7 @@ class RunParameters(BaseModel):
     evaluator: Evaluator | None = None
     experiment_path: Path | str = ""
     capture_logging: bool = True
+    shuffle_tasks: bool = False
 
 
 class InRunParameters(BaseModel):
@@ -232,6 +233,9 @@ def compute_tasks(
     tasks = task_class.read_tasks()
     task_slice = slice(run_parameters.task_set.start, run_parameters.task_set.end)
     tasks = tasks[task_slice]
+    if run_parameters.shuffle_tasks:
+        import random
+        random.shuffle(tasks)
 
     futures: list[tuple[BenchmarkTask, InRunParameters, pebble.ProcessFuture]] = []
     gathered_outputs: list[bytes | TaskErrorResult] = []
